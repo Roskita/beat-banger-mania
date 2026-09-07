@@ -360,7 +360,7 @@
             if (alpha > 0) {
               ctx.fillStyle = `rgba(0,0,0,${alpha})`;
               if (mode === "strip") {
-                const stripWidth = Math.min(430, canvas.width);
+                const stripWidth = Math.min(445, canvas.width);
                 const x = Math.max(0, (canvas.width - stripWidth) / 2);
                 ctx.fillRect(x, 0, stripWidth, canvas.height);
               } else {
