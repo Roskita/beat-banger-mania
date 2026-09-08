@@ -99,6 +99,7 @@
     };
   }
 
+  // .osz -> js object
   function parseOsu(text, nameHint) {
     text = stripBom(text);
     const general = kv(section(text, "General"));
@@ -183,20 +184,12 @@
     return osuMap;
   }
 
-
-  // bb_schema.py equivalents
- 
+  // cfg -> json
   function cfgData(data) {
     return "[main]\n\ndata=" + JSON.stringify(data, null, 2) + "\n";
   }
 
-  // Beat Banger's cfg files are written by Godot/GDScript, which serializes typed
-  // values (Vector2, Color, Rect2, Transform2D, ...) as constructor-call syntax like
-  // `Vector2(-2, 3)` rather than plain JSON. Turn any such `Identifier(...)` into a
-  // JSON array `[...]` so the rest of the value can be parsed as ordinary JSON.
-  // Handles nesting (e.g. a Transform2D wrapping Vector2s) and leaves quoted string
-  // contents untouched.
-  function convertGodotConstructorsToJson(text) {
+  function convertGodotToJson(text) {
     let result = "";
     const n = text.length;
 
@@ -244,13 +237,12 @@
           const closeIdx = findMatchingParen(openIdx);
           if (closeIdx !== -1) {
             const inner = text.slice(openIdx + 1, closeIdx);
-            result += "[" + convertGodotConstructorsToJson(inner) + "]";
+            result += "[" + convertGodotToJson(inner) + "]";
             i = closeIdx + 1;
             continue;
           }
         } else if (name === "True" || name === "False" || name === "None") {
-          // Some cfg values use Python-style bare keywords instead of JSON's
-          // lowercase true/false/null.
+          // cfg has weird booleans
           result += name === "True" ? "true" : name === "False" ? "false" : "null";
           i += name.length;
           continue;
@@ -300,7 +292,7 @@
       throw new Error(`${sourceLabel}: data= value has unbalanced braces/brackets`);
     }
 
-    const raw = convertGodotConstructorsToJson(text.slice(start, end + 1));
+    const raw = convertGodotToJson(text.slice(start, end + 1));
     try {
       return JSON.parse(raw);
     } catch (e) {
@@ -321,26 +313,50 @@
     }
   }
 
-  function makePlaceholderPng(size, color) {
-    color = color || [40, 40, 40];
+  // img -> uint8
+  async function loadImgBytes(path) {
+    const response = await fetch(path);
+    if (!response.ok) {
+      throw new Error(`could not load ${path}`)
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  }
+  // default 
+  function makePlaceholderPng(size) {
     return new Promise((resolve, reject) => {
-      try {
-        const canvas = document.createElement("canvas");
-        canvas.width = size;
-        canvas.height = size;
-        const ctx = canvas.getContext("2d");
-        ctx.fillStyle = `rgb(${color[0]},${color[1]},${color[2]})`;
-        ctx.fillRect(0, 0, size, size);
-        canvas.toBlob((blob) => {
-          if (!blob) return reject(new Error("canvas.toBlob failed"));
-          blob.arrayBuffer().then((buf) => resolve(new Uint8Array(buf))).catch(reject);
-        }, "image/png");
-      } catch (e) {
-        reject(e);
-      }
+      loadImgBytes("assets/mania.png")
+        .then((bytes) => {
+          const blob = new Blob([bytes]);
+          const url = URL.createObjectURL(blob);
+          const img = new Image();
+          img.onload = () => {
+            try {
+              const canvas = document.createElement("canvas");
+              canvas.width = size;
+              canvas.height = size;
+              const ctx = canvas.getContext("2d");
+              ctx.drawImage(img, 0, 0, size, size);
+              canvas.toBlob((outBlob) => {
+                URL.revokeObjectURL(url);
+                if (!outBlob) return reject(new Error("canvas.toBlob failed"));
+                outBlob.arrayBuffer().then((buf) => resolve(new Uint8Array(buf))).catch(reject);
+              }, "image/png");
+            } catch (e) {
+              URL.revokeObjectURL(url);
+              reject(e);
+            }
+          };
+          img.onerror = () => {
+            URL.revokeObjectURL(url);
+            reject(new Error("Failed to load"));
+          };
+          img.src = url;
+        })
+        .catch(reject);
     });
   }
 
+  // praise be to claude lol
   function dimImageBytes(bytes, dimPercent, mode) {
     mode = mode === "strip" ? "strip" : "full";
     return new Promise((resolve, reject) => {
@@ -360,7 +376,7 @@
             if (alpha > 0) {
               ctx.fillStyle = `rgba(0,0,0,${alpha})`;
               if (mode === "strip") {
-                const stripWidth = Math.min(445, canvas.width);
+                const stripWidth = Math.min(450, canvas.width); // hey bunfan you should totally add this
                 const x = Math.max(0, (canvas.width - stripWidth) / 2);
                 ctx.fillRect(x, 0, stripWidth, canvas.height);
               } else {
@@ -379,7 +395,7 @@
         };
         img.onerror = () => {
           URL.revokeObjectURL(url);
-          reject(new Error("Failed to load background image for dimming"));
+          reject(new Error("Failed to load background image"));
         };
         img.src = url;
       } catch (e) {
@@ -389,7 +405,7 @@
     });
   }
 
-  // mirror a map upon conversion
+  // imagine getting mind blocked by furry girl
   function mirrorLane(lane) {
     return 3 - Math.max(0, Math.min(3, lane));
   }
@@ -411,7 +427,7 @@
     if (!filename) return null;
     const targetLower = filename.toLowerCase();
     const entries = Object.values(zip.files).filter((f) => !f.dir);
-    // direct match first (name equals, case-insensitive, ignoring path)
+    // edge cases for funsies
     for (const f of entries) {
       if (f.name.toLowerCase() === targetLower) return f;
     }
@@ -446,6 +462,7 @@
     return candidates[0];
   }
 
+  // this prolly doesnt work but its good anyway for valid return
   async function findVideoEntry(zip, declaredFilename) {
     if (declaredFilename) {
       const entry = await findEntryByBasename(zip, declaredFilename, { recursive: true });
@@ -459,7 +476,7 @@
     return candidates[0];
   }
 
-  // Beat Banger's video player expects Ogg Theora (.ogv); 
+  // Beat Banger is .ogv for some reason; 
   const BB_VIDEO_EXT_RE = /\.ogv$/i;
 
   async function convertOszToBB(file, JSZip, onWarning, options) {
@@ -478,7 +495,7 @@
       if (mode === 3 && columns === 4) maps.push(entry);
     }
     if (!maps.length) {
-      throw new Error("No 4K maps found, only 4K is valid in Beat Banger");
+      throw new Error("Only 4K is valid in Beat Banger!... for now?");
     }
     maps.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
 
@@ -500,14 +517,10 @@
       videoEntry = await findVideoEntry(inputZip, videoEvents[0].filename);
       videoStartMs = videoEvents[0].startMs;
       if (!videoEntry) {
-        warn(
-          `This beatmap references a video background ("${videoEvents[0].filename}") ` +
-            "that couldn't be found in the mapset, so it wasn't included."
-        );
+        warn(`video could not be located in file, converted mod won't have a video`);
       } else if (!BB_VIDEO_EXT_RE.test(videoEntry.name)) {
         warn(
-          `This beatmap's video (${basename(videoEntry.name)}) isn't Ogg Theora (.ogv), ` +
-            "which is what Beat Banger's video player expects so it may not work"
+          `Beatmaps video cant be represented has .ogv, video bg excluded`
         );
       }
     }
@@ -526,7 +539,7 @@
     const imagesDir = level.folder("images");
     const videoDir = level.folder("video");
 
-    // sorts diff by note count, imperfect but good enough lol
+    // sorts diffs by note count, imperfect but good enough lol
     function noteCount(osuMap) {
       return osuMap.notes.length;
     }
@@ -550,7 +563,7 @@
 
     const audioEntry = await findAudioEntry(inputZip, first.audioFilename);
     if (!audioEntry) {
-      throw new Error("Could not find an audio file in the osu! mapset.");
+      throw new Error("Could not find an audio file");
     }
     const audioFilename = basename(audioEntry.name);
     audioDir.file(audioFilename, await audioEntry.async("uint8array"));
@@ -563,8 +576,8 @@
     const bpm = first.bpm;
     if (bpm === null) {
       throw new Error(
-        `${basename(maps[0].name)}: no valid uninherited timing point found — ` +
-          "cannot determine BPM. A wrong BPM would silently desync every note in the chart."
+        `${basename(maps[0].name)}: no valid uninherited timing point found, ` +
+          "cannot determine BPM."
       );
     }
     const distinctBpms = new Set(
@@ -573,17 +586,12 @@
         .map((tp) => round(60000.0 / tp.beatLengthMs, 2))
     );
     if (distinctBpms.size > 1) {
-      throw new Error(
-        `${basename(maps[0].name)}: map has ${distinctBpms.size} different BPM values ` +
-          `(${[...distinctBpms].sort((a, b) => a - b).join(", ")}) across its uninherited ` +
-          "timing points. This converter does not support BPM changes."
-      );
+      throw new Error("Unfortunately, Beat Banger needs a constant BPM");
     }
 
     let backgroundName = null;
-    // A PNG re-encode (via canvas, undimmed) of the resolved background, reused below
-    // as the mod's splash/thumbnail art instead of the generic placeholder logos.
     let backgroundArtBytes = null;
+
     if (includeBackground) {
       const backgroundEntry = await findBackgroundEntry(inputZip, first.backgroundFilename);
       if (backgroundEntry) {
@@ -679,9 +687,7 @@
     const osuLogo = await loadImage("assets/osu.png");
     const mania = await loadImage("assets/mania.png");
 
-    // Use the beatmap's actual background art for splash/thumbnail images when we have
-    // one; only fall back to the generic placeholder logos when there's no background
-    // (or the person unchecked "include background image").
+    // Beatmap's bg art will be the thumb and splash, otherwise generic mania placeholder
     root.file("thumb.png", backgroundArtBytes || mania);
     level.file("splash.png", backgroundArtBytes || osuLogo);
     level.file("thumb.png", backgroundArtBytes || osuLogo);
@@ -691,7 +697,7 @@
     return { filename: `${modName}.zip`, blob, modName, chartCount: charts.length, anyHolds };
   }
 
-  // bb_parser.py / bb_to_osu.py / osu_writer.py :: BB mod -> .osz
+  // bb -> .osz
 
   function noteFromDict(d) {
     const lane = parseInt(d.input_type || 0, 10);
@@ -824,7 +830,7 @@ ${hitObjects}
       (f) => !f.dir && /(^|\/)act\.cfg$/i.test(f.name)
     );
     if (!actEntries.length) {
-      throw new Error("No act.cfg found — this doesn't look like a Beat Banger mod.");
+      throw new Error("No act.cfg found, not a valid BB mod");
     }
     actEntries.sort((a, b) => a.name.split("/").length - b.name.split("/").length);
     const actEntry = actEntries[0];
@@ -882,7 +888,7 @@ ${hitObjects}
         backgroundEntry = await resolveAsset(zip, levelDir, "images", bgEntries[0].path);
       }
 
-      //give up video conversion since beat banger animations use image grids
+      // considering BB uses keyframe loops you're just going to see the end (which ig matters most!)
       let videoEntry = null;
       let videoStartMs = 0;
       const videoEntries = keyframes.video || [];
@@ -890,10 +896,7 @@ ${hitObjects}
         videoEntry = await resolveAsset(zip, levelDir, "video", videoEntries[0].path);
         videoStartMs = (parseFloat(videoEntries[0].timestamp) || 0) * 1000;
         if (!videoEntry) {
-          levelWarnings.push(
-            `Video background '${videoEntries[0].path}' referenced in keyframes.cfg was not ` +
-              "found under video/ and was not included."
-          );
+          levelWarnings.push("Video background was not found and won't be included");
         } 
       }
 
