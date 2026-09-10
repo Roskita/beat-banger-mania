@@ -321,41 +321,7 @@
     }
     return new Uint8Array(await response.arrayBuffer());
   }
-  // default 
-  function makePlaceholderPng(size) {
-    return new Promise((resolve, reject) => {
-      loadImgBytes("assets/mania.png")
-        .then((bytes) => {
-          const blob = new Blob([bytes]);
-          const url = URL.createObjectURL(blob);
-          const img = new Image();
-          img.onload = () => {
-            try {
-              const canvas = document.createElement("canvas");
-              canvas.width = size;
-              canvas.height = size;
-              const ctx = canvas.getContext("2d");
-              ctx.drawImage(img, 0, 0, size, size);
-              canvas.toBlob((outBlob) => {
-                URL.revokeObjectURL(url);
-                if (!outBlob) return reject(new Error("canvas.toBlob failed"));
-                outBlob.arrayBuffer().then((buf) => resolve(new Uint8Array(buf))).catch(reject);
-              }, "image/png");
-            } catch (e) {
-              URL.revokeObjectURL(url);
-              reject(e);
-            }
-          };
-          img.onerror = () => {
-            URL.revokeObjectURL(url);
-            reject(new Error("Failed to load"));
-          };
-          img.src = url;
-        })
-        .catch(reject);
-    });
-  }
-
+ 
   // praise be to claude lol
   function dimImageBytes(bytes, dimPercent, mode) {
     mode = mode === "strip" ? "strip" : "full";
@@ -556,7 +522,7 @@
         rating: i,
       });
       anyHolds = anyHolds || osuMap.notes.some((n) => n.isHold);
-      imagesDir.file(`icon${i}.png`, await makePlaceholderPng(32));
+      imagesDir.file(`icon${i}.png`, await loadImgBytes("assets/bird.png"));
     }
     
     configDir.file("notes.cfg", cfgData({ charts }));
@@ -661,7 +627,12 @@
       cfgData({ post_song_delay: 5.0, song_offset: 0.0 })
     );
 
-    level.file("editor_cache.cfg", cfgData({ audio_path: audioFilename }));
+    level.file(
+      "editor_cache.cfg",
+      cfgData(
+        backgroundName ? [{ background: backgroundName }] : [] // idk if cache really needs it, it works when empty tho
+      )
+    );
 
     root.file(
       "act.cfg",
@@ -687,11 +658,11 @@
     const osuLogo = await loadImage("assets/osu.png");
     const mania = await loadImage("assets/mania.png");
 
-    // Beatmap's bg art will be the thumb and splash, otherwise generic mania placeholder
+    // Beatmap's bg art will be the thumb and splash, otherwise osu logo
     root.file("thumb.png", backgroundArtBytes || mania);
     level.file("splash.png", backgroundArtBytes || osuLogo);
     level.file("thumb.png", backgroundArtBytes || osuLogo);
-    level.file("waveform.png", await makePlaceholderPng(64));
+    level.file("waveform.png", backgroundArtBytes || mania);
 
     const blob = await out.generateAsync({ type: "blob", compression: "DEFLATE" });
     return { filename: `${modName}.zip`, blob, modName, chartCount: charts.length, anyHolds };
